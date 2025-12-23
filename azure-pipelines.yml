@@ -1,0 +1,130 @@
+trigger: none
+
+pool: Default
+
+stages:
+- stage: Inital_Stage
+  displayName: Terraform_tool_install
+  jobs:
+  - job: Terraform_tool_install
+    steps:
+    - task: TerraformInstaller@1
+      inputs:
+        terraformVersion: 'latest'
+    
+    - task: PowerShell@2
+      inputs:
+       targetType: 'inline'
+    - script: 'az group create -n bkddevrg001 -l centralindia && az storage account create -n jdbked002 -g bkddevrg001 -l centralindia --sku Standard_LRS && az storage container create -n jdtfstate --account-name jdbked002'
+
+- stage: second_stage
+  displayName: Terraform_init
+  jobs:
+  - job: Terraform_init
+    steps:
+    - task: TerraformTask@5
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment/'
+        backendServiceArm: 'jdappsvc'
+        backendAzureRmStorageAccountName: 'jdbked002'
+        backendAzureRmContainerName: 'jdtfstate'
+        backendAzureRmKey: 'test.tfstate'
+
+- stage: Scanning_stage
+  jobs:
+  - job: tfsec_scanning
+    steps: 
+    - task: PowerShell@2
+      displayName: tfsec_scanning
+      inputs:
+        targetType: 'inline'
+        script: 'tfsec $(System.DefaultWorkingDirectory)/environment --minimum-severity HIGH'
+  
+  - job: tflint_scnning
+    dependsOn: tfsec_scanning
+    steps:
+    - task: PowerShell@2
+      displayName: tflint_scnning
+      inputs:
+        targetType: 'inline'
+        script: |
+          winget install TerraformLinters.tflint
+          ls
+          tflint.exe --chdir=. --recursive
+        errorActionPreference: 'continue'
+        progressPreference: 'default'
+        ignoreLASTEXITCODE: true
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- stage: Infra_cost
+  jobs:
+  - job: Terraform_init
+    steps:
+    - task: TerraformTask@5
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment/'
+        backendServiceArm: 'jdappsvc'
+        backendAzureRmStorageAccountName: 'jdbked002'
+        backendAzureRmContainerName: 'jdtfstate'
+        backendAzureRmKey: 'test.tfstate'
+
+  - job: infra_cost
+    dependsOn: Terraform_init
+    steps: 
+    - task: PowerShell@2
+      displayName: infraCost
+      inputs:
+        targetType: 'inline'
+        script: 'infracost breakdown --path=.  --terraform-var-file terraform.tfvars'
+        errorActionPreference: 'continue'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment/'
+
+- stage: Planning_stage
+  jobs:
+  - job: Terraform_init
+    pool: Default
+    steps:
+    - task: TerraformTask@5
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment/'
+        backendServiceArm: 'jdappsvc'
+        backendAzureRmStorageAccountName: 'jdbked002'
+        backendAzureRmContainerName: 'jdtfstate'
+        backendAzureRmKey: 'test.tfstate'
+   
+    - task: TerraformTask@5
+      displayName: terraform_plan
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment'
+        environmentServiceNameAzureRM: 'jdappsvc'
+
+- stage: Apply_stage
+  jobs:
+  - job: Terraform_apply
+    displayName: Terraform Apply
+    pool: Default
+    steps:
+    - task: TerraformTask@5
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment/'
+        backendServiceArm: 'jdappsvc'
+        backendAzureRmStorageAccountName: 'jdbked002'
+        backendAzureRmContainerName: 'jdtfstate'
+        backendAzureRmKey: 'test.tfstate'
+    
+    - task: TerraformTask@5
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/environment'
+        environmentServiceNameAzureRM: 'jdappsvc'
